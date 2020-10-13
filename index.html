@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="bluez-web-bluetooth" content="width=device-width, initial-scale=1.0">
+        <title>Document</title>
+        <script src="telink-ota.js"></script>
+
+    </head>
+    <style>
+      html { margin: 0; padding: 0; border: 0; }
+      body { font-family: 'Raleway', sans-serif; color: #d7ecfb; background-color: #072b44; text-align: center; }
+      textarea{color:greenyellow; background-color:black;}
+    </style>
+    <body>
+      <div id="main" style="width: 1450px;float: left;">
+        <h3>Web Bluetooth blood pressure Measurement</h3><hr>
+        <div id="showlog" style="width: 700px;float: left;">
+          <button style="float: left;" onclick="clearLoginfo()">clear log</button>
+          <button id="btn-connect" onclick="clickConnect()">scan bluetooth</button>
+          <button id="btn-disconnet" onclick="deviceDisconnect()">Disconnect</button><br><br>
+          <textarea id="log" cols="90" rows="20" readonly="readonly"></textarea>
+        </div>
+        <div id="drop" style="width: 700px;float: right; background-color:darkgray">
+          <div id="statusText">blood pressure &#x2764;</div>
+          <canvas id="waves" style="width: 600px;"></canvas>
+        </div>
+      </div>
+
+    </body>
+</html>
+
+<script>
+
+    var blockCount,firmwareArray = "";            //ota-file
+    var startTime,sendcmd;                        //sendcmd and time
+    var last4byte,OTAversion=0,actionOTA_03ff=0;  //version check and authentication
+    var ServiceMain,nitifiyCharTemp;              //2b12notify
+    var OTApause=1,OTApuasecount=0;               //OTA-puase,count
+    var heartRates = [];
+    var mode = 'bar';
+
+    var canvas = document.querySelector('canvas');
+    var statusText = document.querySelector('#statusText');
+    var fanlight = new Fanlight();
+
+    /**
+     * @clickConnect
+     * Scan and connect to nearby Bluetooth devices
+    */
+    function clickConnect(){
+      fanlight.request().then(connt => {
+        addLoginfo("Bluetooth connection successful");
+      })
+      .catch(error => {
+        addLoginfo('Argh! ' + error);
+      });
+    }
+
+
+    function read_heart_rate(){
+      nitifiyCharTemp.readValue().then(result => {
+        addLoginfo("yi xi shi read value");
+        addLoginfo(result);
+        addLoginfo(result.getUint8(0));
+      });
+    }
+  /**
+   * @otaCharSend
+   * Send data by characteristic
+   */
+  var otaCharSend = function(data) {
+    return new Promise(function(resolve, reject) {
+        console.log("OTA: " + data);
+        fanlight.Txchartic.writeValueWithoutResponse(hexToBytes(data)).then(function(character) {
+            resolve("ok");
+        }).catch(function(err) {
+            reject("some error while sending char data");
+        });
+    });
+  }
+
+ 
+  /**
+   * @bytesToHex
+   * Convert ByteArray to hex
+   */
+  function bytesToHex(data) {
+    return new Uint8Array(data).reduce(function(memo, i) {
+        return memo + ("0" + i.toString(16)).slice(-2);
+    }, "");
+  }
+
+  /**
+   * @hexToBytes
+   * Convert hex to ByteArray
+   */
+  function hexToBytes(hex) {
+    for (var bytes = [], c = 0; c < hex.length; c += 2)
+        bytes.push(parseInt(hex.substr(c, 2), 16));
+    return new Uint8Array(bytes);
+  }
+
+  /**
+   * @addLoginfo
+   * Displays the interaction information in the log box on the web page
+   */
+  function addLoginfo(logTXT) {
+    var time = new Date().toLocaleTimeString("de-DE");
+    var logString = time + ": > " + logTXT;
+    document.getElementById("log").innerHTML += logString + "\n";
+  }
+
+  /**
+   * @clearLoginfo
+   * Clear the information in the log box
+   */
+  function clearLoginfo() {
+    document.getElementById("log").value= "";
+  }
+
+  /**
+   * @Failed_info
+   * Display exception information
+   */
+  function Failed_info(err) {
+    addLoginfo("Update error: " + err);
+    setStatus("Update error: " + err);
+  }
+
+  /**
+   * @deviceDisconnect
+   * device disconnect
+   */
+  function deviceDisconnect() {
+    fanlight.disconnect();
+  }
+
+  /**
+   * @OTA_Authorization
+   * Process feedback after a command is sent
+   */
+  function OTA_Authorization(gattServer) {
+    heartRates = [];
+    gattServer.getPrimaryService("00001810-0000-1000-8000-00805f9b34fb")
+      .then(service => {
+        addLoginfo("found heart rate service");
+        console.log(service);
+        ServiceMain = service;
+        return ServiceMain.getCharacteristic("00002a35-0000-1000-8000-00805f9b34fb");
+      })
+      .then(characteristic => {
+        addLoginfo('Found heart rate characteristic');
+        console.log(characteristic);
+        console.log(characteristic.properties);
+        nitifiyCharTemp = characteristic; 
+        return nitifiyCharTemp.startNotifications();
+      })
+      .then(() => {
+        nitifiyCharTemp.addEventListener('characteristicvaluechanged', event => {
+            var souvalue = event.target.value;
+            console.log(souvalue);
+            var ntvalue = bytesToHex(souvalue.buffer);
+            addLoginfo("notify-value: " + ntvalue);
+            author_log();
+            var heartRateMeasurement = parseHeartRate(souvalue);
+            statusText.innerHTML = heartRateMeasurement.heartRate + ' &#x2764;';
+            heartRates.push(heartRateMeasurement.heartRate);
+            drawWaves();
+        }).catch(error => console.log(error));
+      });
+  }
+
+  canvas.addEventListener('click', event => {
+    mode = mode === 'bar' ? 'line' : 'bar';
+    drawWaves();
+  });
+
+  function parseHeartRate(value) {
+      // In Chrome 50+, a DataView is returned instead of an ArrayBuffer.
+      value = value.buffer ? value : new DataView(value);
+      let flags = value.getUint8(0);
+      let rate16Bits = flags & 0x1;
+      let result = {};
+      let index = 1;
+      if (rate16Bits) {
+        result.heartRate = value.getUint16(index, /*littleEndian=*/true);
+        index += 2;
+      } else {
+        result.heartRate = value.getUint8(index);
+        index += 1;
+      }
+      let contactDetected = flags & 0x2;
+      let contactSensorPresent = flags & 0x4;
+      if (contactSensorPresent) {
+        result.contactDetected = !!contactDetected;
+      }
+      let energyPresent = flags & 0x8;
+      if (energyPresent) {
+        result.energyExpended = value.getUint16(index, /*littleEndian=*/true);
+        index += 2;
+      }
+      let rrIntervalPresent = flags & 0x10;
+      if (rrIntervalPresent) {
+        let rrIntervals = [];
+        for (; index + 1 < value.byteLength; index += 2) {
+          rrIntervals.push(value.getUint16(index, /*littleEndian=*/true));
+        }
+        result.rrIntervals = rrIntervals;
+      }
+      return result;
+  }
+
+  function drawWaves() {
+  requestAnimationFrame(() => {
+    canvas.width = parseInt(getComputedStyle(canvas).width.slice(0, -2)) * devicePixelRatio;
+    canvas.height = parseInt(getComputedStyle(canvas).height.slice(0, -2)) * devicePixelRatio;
+
+    var context = canvas.getContext('2d');
+    var margin = 2;
+    var max = Math.max(0, Math.round(canvas.width / 11));
+    var offset = Math.max(0, heartRates.length - max);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = '#00796B';
+    if (mode === 'bar') {
+      for (var i = 0; i < Math.max(heartRates.length, max); i++) {
+        var barHeight = Math.round(heartRates[i + offset ] * canvas.height / 200);
+        context.rect(11 * i + margin, canvas.height - barHeight, margin, Math.max(0, barHeight - margin));
+        context.stroke();
+      }
+    } else if (mode === 'line') {
+      context.beginPath();
+      context.lineWidth = 6;
+      context.lineJoin = 'round';
+      context.shadowBlur = '1';
+      context.shadowColor = '#333';
+      context.shadowOffsetY = '1';
+      for (var i = 0; i < Math.max(heartRates.length, max); i++) {
+        var lineHeight = Math.round(heartRates[i + offset ] * canvas.height / 200);
+        if (i === 0) {
+          context.moveTo(11 * i, canvas.height - lineHeight);
+        } else {
+          context.lineTo(11 * i, canvas.height - lineHeight);
+        }
+        context.stroke();
+      }
+    }
+  });
+  }
+
+  window.onresize = drawWaves;
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+    drawWaves();
+    }
+  });
+
+  function author_log(){
+    var obj = document.getElementById("log");
+    obj.scrollTop = obj.scrollHeight;
+  }
+</script>
