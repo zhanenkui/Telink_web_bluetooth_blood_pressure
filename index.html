@@ -5,7 +5,7 @@
         <meta charset="UTF-8">
         <meta name="bluez-web-bluetooth" content="width=device-width, initial-scale=1.0">
         <title>Document</title>
-        <script src="telink_blood_pressure.js"></script>
+        <script src="telink-blood-pressure.js"></script>
 
     </head>
     <style>
@@ -14,17 +14,20 @@
       textarea{color:greenyellow; background-color:black;}
     </style>
     <body>
-      <div id="main" style="width: 1450px;float: left;">
+      <div id="main" style="width: 1450px;float: left">
         <h3>Web Bluetooth blood pressure Measurement</h3><hr>
         <div id="showlog" style="width: 700px;float: left;">
           <button style="float: left;" onclick="clearLoginfo()">clear log</button>
           <button id="btn-connect" onclick="clickConnect()">scan bluetooth</button>
           <button id="btn-disconnet" onclick="deviceDisconnect()">Disconnect</button><br><br>
-          <textarea id="log" cols="90" rows="20" readonly="readonly"></textarea>
+          <textarea id="log" cols="90" rows="25" readonly="readonly"></textarea>
         </div>
-        <div id="drop" style="width: 700px;float: right; background-color:darkgray">
-          <div id="statusText">blood pressure &#x2764;</div>
-          <canvas id="waves" style="width: 600px;"></canvas>
+        <div id="drop" style="width: 700px;float: right;">
+          <div id="statusText">Blood Pressure Measurement Compound Value</div><br><br>
+          <p id="blood_pre_s" style="float: left">Systolic:</p><br><br><br><br>
+          <p id="blood_pre_d" style="float: left">Diastolic:</p><br><br><br><br>
+          <p id="blood_pre_m" style="float: left">Mean Arterial Pressure:</p><br><br><br><br>
+          <p id="pulse_rate" style="float: left">Pulse Rate value:</p>
         </div>
       </div>
 
@@ -141,17 +144,17 @@
    * @OTA_Authorization
    * Process feedback after a command is sent
    */
-  function OTA_Authorization(gattServer) {
+  function Data_info_manage(gattServer) {
     heartRates = [];
     gattServer.getPrimaryService("00001810-0000-1000-8000-00805f9b34fb")
       .then(service => {
-        addLoginfo("found heart rate service");
+        addLoginfo("found blood pressure service");
         console.log(service);
         ServiceMain = service;
         return ServiceMain.getCharacteristic("00002a35-0000-1000-8000-00805f9b34fb");
       })
       .then(characteristic => {
-        addLoginfo('Found heart rate characteristic');
+        addLoginfo('Found blood pressure characteristic');
         console.log(characteristic);
         console.log(characteristic.properties);
         nitifiyCharTemp = characteristic; 
@@ -164,98 +167,30 @@
             var ntvalue = bytesToHex(souvalue.buffer);
             addLoginfo("notify-value: " + ntvalue);
             author_log();
-            var heartRateMeasurement = parseHeartRate(souvalue);
-            statusText.innerHTML = heartRateMeasurement.heartRate + ' &#x2764;';
-            heartRates.push(heartRateMeasurement.heartRate);
-            drawWaves();
+
+            var bp_value1 = ntvalue.slice(2,6);
+            var bp_value_T1 = parseInt(bp_value1,16);
+            //addLoginfo("get value:" + therm_T);
+            document.getElementById("blood_pre_s").innerHTML = "Systolic value -->: " + bp_value_T1/2 + " (mmHg/kpa)";
+
+            var bp_value2 = ntvalue.slice(6,10);
+            var bp_value_T2 = parseInt(bp_value2,16);
+            //addLoginfo("get value:" + therm_T);
+            document.getElementById("blood_pre_d").innerHTML = "Diastolic value -->: " + bp_value_T2/8 + " (mmHg/kpa)";
+
+            var bp_value3 = ntvalue.slice(10,14);
+            var bp_value_T3 = parseInt(bp_value3,16);
+            //addLoginfo("get value:" + therm_T);
+            document.getElementById("blood_pre_m").innerHTML = "Mean Arterial Pressure value -->: " + bp_value_T3/8 + " (mmHg/kpa)";
+
+            var pulse_rate = ntvalue.slice(28,34);
+            var pulse_rate_value = parseInt(pulse_rate,16);
+            //addLoginfo("get value:" + therm_T);
+            document.getElementById("pulse_rate").innerHTML = "pulse rate value -->: " + pulse_rate_value/10000;
+
         }).catch(error => console.log(error));
       });
   }
-
-  canvas.addEventListener('click', event => {
-    mode = mode === 'bar' ? 'line' : 'bar';
-    drawWaves();
-  });
-
-  function parseHeartRate(value) {
-      // In Chrome 50+, a DataView is returned instead of an ArrayBuffer.
-      value = value.buffer ? value : new DataView(value);
-      let flags = value.getUint8(0);
-      let rate16Bits = flags & 0x1;
-      let result = {};
-      let index = 1;
-      if (rate16Bits) {
-        result.heartRate = value.getUint16(index, /*littleEndian=*/true);
-        index += 2;
-      } else {
-        result.heartRate = value.getUint8(index);
-        index += 1;
-      }
-      let contactDetected = flags & 0x2;
-      let contactSensorPresent = flags & 0x4;
-      if (contactSensorPresent) {
-        result.contactDetected = !!contactDetected;
-      }
-      let energyPresent = flags & 0x8;
-      if (energyPresent) {
-        result.energyExpended = value.getUint16(index, /*littleEndian=*/true);
-        index += 2;
-      }
-      let rrIntervalPresent = flags & 0x10;
-      if (rrIntervalPresent) {
-        let rrIntervals = [];
-        for (; index + 1 < value.byteLength; index += 2) {
-          rrIntervals.push(value.getUint16(index, /*littleEndian=*/true));
-        }
-        result.rrIntervals = rrIntervals;
-      }
-      return result;
-  }
-
-  function drawWaves() {
-  requestAnimationFrame(() => {
-    canvas.width = parseInt(getComputedStyle(canvas).width.slice(0, -2)) * devicePixelRatio;
-    canvas.height = parseInt(getComputedStyle(canvas).height.slice(0, -2)) * devicePixelRatio;
-
-    var context = canvas.getContext('2d');
-    var margin = 2;
-    var max = Math.max(0, Math.round(canvas.width / 11));
-    var offset = Math.max(0, heartRates.length - max);
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = '#00796B';
-    if (mode === 'bar') {
-      for (var i = 0; i < Math.max(heartRates.length, max); i++) {
-        var barHeight = Math.round(heartRates[i + offset ] * canvas.height / 200);
-        context.rect(11 * i + margin, canvas.height - barHeight, margin, Math.max(0, barHeight - margin));
-        context.stroke();
-      }
-    } else if (mode === 'line') {
-      context.beginPath();
-      context.lineWidth = 6;
-      context.lineJoin = 'round';
-      context.shadowBlur = '1';
-      context.shadowColor = '#333';
-      context.shadowOffsetY = '1';
-      for (var i = 0; i < Math.max(heartRates.length, max); i++) {
-        var lineHeight = Math.round(heartRates[i + offset ] * canvas.height / 200);
-        if (i === 0) {
-          context.moveTo(11 * i, canvas.height - lineHeight);
-        } else {
-          context.lineTo(11 * i, canvas.height - lineHeight);
-        }
-        context.stroke();
-      }
-    }
-  });
-  }
-
-  window.onresize = drawWaves;
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-    drawWaves();
-    }
-  });
 
   function author_log(){
     var obj = document.getElementById("log");

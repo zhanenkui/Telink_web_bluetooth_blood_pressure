@@ -14,7 +14,7 @@ class Fanlight {
   request() {
     let options = {
       acceptAllDevices: true,
-      optionalServices: ["00010203-0405-0607-0809-0a0b0c0d1912","00001810-0000-1000-8000-00805f9b34fb"]
+      optionalServices: ["00001810-0000-1000-8000-00805f9b34fb"]
       };
     return navigator.bluetooth.requestDevice(options)
     .then(device => {
@@ -28,17 +28,17 @@ class Fanlight {
     .then(server => {
       addLoginfo('Getting Service...');
       this.gattserve = server;
-      return server.getPrimaryService("00010203-0405-0607-0809-0a0b0c0d1912");
+      return server.getPrimaryService("00001810-0000-1000-8000-00805f9b34fb");
     })
     .then(service => {
       addLoginfo('Getting Characteristic...');
       addLoginfo('service UUID:              ' + service.uuid);
-      return service.getCharacteristic("00010203-0405-0607-0809-0a0b0c0d2b12");
+      return service.getCharacteristic("00002a35-0000-1000-8000-00805f9b34fb");
     })
     .then(characteristic => {
       this.Txchartic = characteristic;
       addLoginfo('write Characteristic UUID: ' + characteristic.uuid);
-      OTA_Authorization(this.gattserve);
+      Data_info_manage(this.gattserve);
     });
   }
 
@@ -59,25 +59,6 @@ class Fanlight {
    */
   onDisconnected() {
     addLoginfo('Device is disconnected.');
-  }
-
-  /**
-   * @readOTAmode
-   * Read values by characteristic
-   */
-  readOTAmode() {
-    return this.gattserve.getPrimaryService("00010203-0405-0607-0809-0a0b0c0d1912")
-    .then(service => service.getCharacteristic("00010203-0405-0607-0809-0a0b0c0d2b12"))
-    .then(characteristic => {
-      console.log("na dao read chartic");
-      console.log(characteristic);
-      characteristic.readValue().then(result => {
-        console.log(result);
-        console.log(result.getUint8(0));
-        //console.log(result.getUint8(1));
-        return result;
-      });
-    });
   }
 
   /**
